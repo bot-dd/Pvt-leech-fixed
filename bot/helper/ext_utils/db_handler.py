@@ -18,7 +18,7 @@ class DbManger:
     def __connect(self):
         try:
             self.__conn = AsyncIOMotorClient(DATABASE_URL)
-            self.__db = self.__conn.wzmlx
+            self.__db = self.__conn.wzmlx # New Section for not conflicting with mltb section !!
         except PyMongoError as e:
             LOGGER.error(f"Error in DB connection: {e}")
             self.__err = True
@@ -27,8 +27,12 @@ class DbManger:
         if self.__err:
             return
         await self.__db.settings.config.update_one({'_id': bot_id}, {'$set': config_dict}, upsert=True)
-        await self.__db.settings.aria2c.update_one({'_id': bot_id}, {'$set': aria2_options}, upsert=True)
-        await self.__db.settings.qbittorrent.update_one({'_id': bot_id}, {'$set': qbit_options}, upsert=True)
+        
+        if await self.__db.settings.aria2c.find_one({'_id': bot_id}) is None:
+            await self.__db.settings.aria2c.update_one({'_id': bot_id}, {'$set': aria2_options}, upsert=True)
+
+        if await self.__db.settings.qbittorrent.find_one({'_id': bot_id}) is None:
+            await self.__db.settings.qbittorrent.update_one({'_id': bot_id}, {'$set': qbit_options}, upsert=True)
 
         if await self.__db.users[bot_id].find_one():
             rows = self.__db.users[bot_id].find({})
@@ -69,30 +73,6 @@ class DbManger:
 
         self.__conn.close
 
-    async def update_config(self, config: dict):
-        if self.__err:
-            return
-        await self.__db.settings.config.update_one({'_id': bot_id}, {'$set': config}, upsert=True)
-        self.__conn.close
-
-    async def update_aria2(self, key: str, value: str):
-        if self.__err:
-            return
-        await self.__db.settings.aria2c.update_one({'_id': bot_id}, {'$set': {key: value}}, upsert=True)
-        self.__conn.close
-
-    async def update_qbittorrent(self, key: str, value):
-        if self.__err:
-            return
-        await self.__db.settings.qbittorrent.update_one({'_id': bot_id}, {'$set': {key: value}}, upsert=True)
-        self.__conn.close
-
-    async def update_private_file(self, file_path: str):
-        if self.__err:
-            return
-        await self.__db.settings.private_files.update_one({'_id': bot_id}, {'$set': {'file_path': file_path}}, upsert=True)
-        self.__conn.close
-
     async def update_deploy_config(self):
         if self.__err:
             return
@@ -104,9 +84,12 @@ class DbManger:
         if self.__err:
             return
         data = user_data[user_id]
-        for f in ['thumb', 'rclone', 'watermark']:
-            if data.get(f):
-                del data[f]
+        if data.get('thumb'):
+            del data['thumb']
+        if data.get('rclone'):
+            del data['rclone']
+        if data.get('watermark'):
+            del data['watermark']
         await self.__db.users[bot_id].replace_one({'_id': user_id}, data, upsert=True)
         self.__conn.close
 
@@ -119,8 +102,8 @@ class DbManger:
             async for row in rows:
                 cid = row.get('cid')
                 tag = row.get('tag')
-                source = row.get('source', 'Unknown Source')  # ✅ KeyError fixed
-
+                source = row.get('source', 'Unknown Source')  # ডিফল্ট মান
+                
                 if cid in notifier_dict:
                     if tag in notifier_dict[cid]:
                         notifier_dict[cid][tag].append({row['_id']: source})
@@ -128,20 +111,15 @@ class DbManger:
                         notifier_dict[cid][tag] = [{row['_id']: source}]
                 else:
                     notifier_dict[cid] = {tag: [{row['_id']: source}]}
+
         await self.__db.tasks[bot_id].drop()
         self.__conn.close
-        return notifier_dict
+        return notifier_dict  # {cid: {tag: [{_id: source}, {_id, source}, ...]}}
 
     async def add_incomplete_task(self, cid, link, tag, msg_link, msg):
         if self.__err:
             return
-        await self.__db.tasks[bot_id].insert_one({
-            '_id': link,
-            'cid': cid,
-            'tag': tag,
-            'source': msg_link,
-            'org_msg': msg
-        })
+        await self.__db.tasks[bot_id].insert_one({'_id': link, 'cid': cid, 'tag': tag, 'source': msg_link, 'org_msg': msg})
         self.__conn.close
 
     async def rm_complete_task(self, link):
@@ -153,15 +131,15 @@ class DbManger:
     async def update_pm_users(self, user_id):
         if self.__err:
             return
-        if not await self.__db.pm_users[bot_id].find_one({'_id': user_id}):
+        if not bool(await self.__db.pm_users[bot_id].find_one({'_id': user_id})):
             await self.__db.pm_users[bot_id].insert_one({'_id': user_id})
             LOGGER.info(f'New PM User Added : {user_id}')
         self.__conn.close
-
+        
     async def rss_update_all(self):
         if self.__err:
             return
-        for user_id in rss_dict:
+        for user_id in list(rss_dict.keys()):
             await self.__db.rss[bot_id].replace_one({'_id': user_id}, rss_dict[user_id], upsert=True)
         self.__conn.close
 
@@ -178,6 +156,5 @@ class DbManger:
         self.__conn.close
 
 
-# Run initial DB load if DATABASE_URL is available
 if DATABASE_URL:
     bot_loop.run_until_complete(DbManger().db_load())
