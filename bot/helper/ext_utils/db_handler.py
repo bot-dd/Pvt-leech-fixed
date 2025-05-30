@@ -27,12 +27,8 @@ class DbManger:
         if self.__err:
             return
         await self.__db.settings.config.update_one({'_id': bot_id}, {'$set': config_dict}, upsert=True)
-
-        if await self.__db.settings.aria2c.find_one({'_id': bot_id}) is None:
-            await self.__db.settings.aria2c.update_one({'_id': bot_id}, {'$set': aria2_options}, upsert=True)
-
-        if await self.__db.settings.qbittorrent.find_one({'_id': bot_id}) is None:
-            await self.__db.settings.qbittorrent.update_one({'_id': bot_id}, {'$set': qbit_options}, upsert=True)
+        await self.__db.settings.aria2c.update_one({'_id': bot_id}, {'$set': aria2_options}, upsert=True)
+        await self.__db.settings.qbittorrent.update_one({'_id': bot_id}, {'$set': qbit_options}, upsert=True)
 
         if await self.__db.users[bot_id].find_one():
             rows = self.__db.users[bot_id].find({})
@@ -123,7 +119,8 @@ class DbManger:
             async for row in rows:
                 cid = row.get('cid')
                 tag = row.get('tag')
-                source = row.get('source', 'Unknown Source')
+                source = row.get('source', 'Unknown Source')  # ✅ KeyError fixed
+
                 if cid in notifier_dict:
                     if tag in notifier_dict[cid]:
                         notifier_dict[cid][tag].append({row['_id']: source})
@@ -138,7 +135,13 @@ class DbManger:
     async def add_incomplete_task(self, cid, link, tag, msg_link, msg):
         if self.__err:
             return
-        await self.__db.tasks[bot_id].insert_one({'_id': link, 'cid': cid, 'tag': tag, 'source': msg_link, 'org_msg': msg})
+        await self.__db.tasks[bot_id].insert_one({
+            '_id': link,
+            'cid': cid,
+            'tag': tag,
+            'source': msg_link,
+            'org_msg': msg
+        })
         self.__conn.close
 
     async def rm_complete_task(self, link):
@@ -175,5 +178,6 @@ class DbManger:
         self.__conn.close
 
 
+# Run initial DB load if DATABASE_URL is available
 if DATABASE_URL:
     bot_loop.run_until_complete(DbManger().db_load())
